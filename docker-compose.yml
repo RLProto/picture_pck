@@ -1,0 +1,39 @@
+version: '3'
+services:
+  tina_mostura:
+    container_name: tina_mostura
+    image: rlproto/picture:picture-v1.7  # Use the existing 'picture' image from Docker Hub
+    network_mode: bridge
+    devices:
+      - "/dev/video0:/dev/video0"
+    restart: unless-stopped
+    volumes:
+      - /var/lib/docker/volumes/picture_tina_mostura:/app/data
+    environment:
+      OPC_SERVER_URL: "opc.tcp://10.15.160.149:49312"
+      TAG_NAME: "ns=2;s=BRASSAGEM.PLC1.TINA_MOSTURA.PHASE"
+      #TAG_NAME: "ns=2;s=SODA_TEMPLATE.FILTRACAO.RASP_PASSO"
+      PRODUCT_TAG_NAME: "ns=2;s=BRASSAGEM.PLC1.TINA_MOSTURA.PROGNO"
+      CAMERA_INDEX: "0"
+      EQUIPMENT: "tina_mostura"
+      VALID_STEPS: "2;0;1,4;60;3,6;60;3,8;60;3,13;60;3,14;0;1,15;0;1,16;0;1"
+      NUMBER_OF_PICTURES: "10"
+
+      # COZINHADOR VALID_STEPS: "2;15;3,3;0;1,5;120;3,6;180;3,8;15;3,9;0;1,9;0;2"
+      #NUMBER_OF_PICTURES: "5"
+      
+      #100;0;1
+      #100 -> PASSO
+      #0 -> DELAY OU INTERVALO
+      #1 > ESTRATÉGIA
+
+      #ESTRATÉGIA:
+      #1 -> ENTRADA DO PASSO
+      #2 -> SAÍDA DO PASSO
+      #3 -> INTERVALO DE TEMPO DURANTE O PASSO
+
+      #1 -> ENTRADA DO PASSO COM DELAY
+
+    command: ["python", "app.py"]
+volumes:
+  cozinhador:
