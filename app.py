@@ -21,13 +21,14 @@ logging.basicConfig(level=IMPORTANT, format='%(asctime)s - %(levelname)s - %(mes
 
 OPC_SERVER_URL = os.getenv('OPC_SERVER_URL', 'opc.tcp://10.15.160.149:49312')
 TAG_NAME = os.getenv('TAG_NAME', 'ns=2;s=SODA_TEMPLATE.FILTRACAO.RASP_PASSO')
+STATUS_TAG = os.getenv("STATUS_TAG", 'ns=2;s=DCX501001.PLC.Status_CA')
 CAMERA_INDEX = int(os.getenv('CAMERA_INDEX', 0))
-EQUIPMENT = os.getenv('EQUIPMENT', 'DECANTADOR')
+EQUIPMENT = os.getenv('EQUIPMENT', 'dcx')
 VALID_STEPS = os.getenv('VALID_STEPS', "1;0;1")
 
-NUMBER_OF_PICTURES = int(os.getenv('NUMBER_OF_PICTURES', 1))
+NUMBER_OF_PICTURES = int(os.getenv('NUMBER_OF_PICTURES', 3))
 
-if (NUMBER_OF_PICTURES > 100):
+if NUMBER_OF_PICTURES > 100:
     NUMBER_OF_PICTURES = 100
 
 # Base directory to save images
@@ -104,7 +105,7 @@ def take_pictures(step, is_product_change=False, retry=True):
                 take_pictures(step, is_product_change, retry=False)  # Retry once with the other camera
     finally:
         print("fim")
-        
+
 def parse_valid_steps(config):
     steps = {}
     entries = config.split(',')
@@ -120,21 +121,16 @@ valid_steps = parse_valid_steps(VALID_STEPS)
 print("Valid steps loaded:", valid_steps)  # This should show how keys are formatted
 
 class SubHandler(object):
-    def __init__(self):
+    def __init__(self, status_tag_node):
         self.last_value = None
-        self.last_product_value = None
         self.active_timer = None
         self.last_strategy = None
         self.initial_step_change = False  # Flag to check if initial step change has occurred
-        self.initial_product_change = False  # Flag to check if initial product change has occurred
+        self.status_tag_node = status_tag_node
 
     def handle_value_change(self, new_value):
         print("Handling value change for:", new_value)
-        if self.active_timer:
-            self.active_timer.cancel()
-            self.active_timer = None
-            logging.getLogger().important("Cancelled previous timer due to new valid step.")
-
+    
         step_key = f"{float(new_value):.1f}"
         global step
         step = step_key
@@ -147,13 +143,15 @@ class SubHandler(object):
             self.last_strategy = step_info['strategy'] if step_info else None
             return  # Skip processing for the first change
 
-        # Check if exiting from Strategy 2
-        if self.last_strategy == 2:
-            if not step_info or step_info['strategy'] != 2:
-                take_pictures(str(self.last_value))
-            elif step_info['strategy'] == 2 and step_key != f"{float(self.last_value):.1f}":
-                # Additional condition to handle transition between different Strategy 2 steps
-                take_pictures(str(self.last_value))
+        # Check the STATUS_TAG value
+        try:
+            status_value = self.status_tag_node.get_value()
+            if status_value != 128:
+                logging.getLogger().important(f"STATUS_TAG value is {status_value}, not taking pictures.")
+                return
+        except Exception as e:
+            logging.error(f"Failed to read STATUS_TAG value: {e}")
+            return
 
         if step_info:
             strategy = step_info['strategy']
@@ -164,43 +162,9 @@ class SubHandler(object):
                     self.active_timer.start()
                 else:
                     take_pictures(step_key)
-            elif strategy == 2:
-                # No action needed here if not entering from another Strategy 2 step
-                pass
-            elif strategy == 3:
-                self.start_continuous_capture(delay)
 
         self.last_value = new_value
         self.last_strategy = step_info['strategy'] if step_info else None
-
-    def start_continuous_capture(self, interval):
-        first_enter = True
-        def capture():
-            nonlocal first_enter
-            global step
-            print(f"Current last_value: {self.last_value}, Target step: {step}")
-            if float(self.last_value) == float(step) or first_enter:
-                take_pictures(step)
-                self.active_timer = Timer(interval, capture)
-                self.active_timer.start()
-                first_enter = False
-            else:
-                print("Stopping capture as conditions are not met.")
-                self.active_timer.cancel()
-
-        capture()
-
-    def handle_product_change(self, product_value):
-        if not self.initial_product_change:  # Check if it's the first product change
-            self.initial_product_change = True
-            self.last_product_value = product_value  # Set initial product value
-            return  # Skip further processing until the next product change
-
-        # Now handle changes only if last_product_value is not None
-        if self.last_product_value is not None and product_value >= 0 and self.last_product_value < 0:
-            take_pictures("any_value", is_product_change=True)
-
-        self.last_product_value = product_value  # Update last_product_value for next change
 
 def connect_to_opcua():
     while True:
@@ -209,7 +173,8 @@ def connect_to_opcua():
             client.connect()
             logging.getLogger().important(f"Connected to {OPC_SERVER_URL}")
             tag_node = client.get_node(TAG_NAME)
-            handler = SubHandler()
+            status_tag_node = client.get_node(STATUS_TAG)
+            handler = SubHandler(status_tag_node)
             sub = client.create_subscription(500, handler)
             sub.subscribe_data_change(tag_node)
             logging.getLogger().important("Subscription created, waiting for events...")
@@ -221,10 +186,10 @@ def connect_to_opcua():
                     tag_node.get_value()
                     time.sleep(1)
                 except ua.UaStatusCodeError:
-                    logging.error("Lost connection to OPA UA server. Trying to reconect...")
+                    logging.error("Lost connection to OPC UA server. Trying to reconnect...")
                     break
         except Exception as e:
-            logging.exception(f"An error occurred")
+            logging.exception(f"An error occurred: {e}")
             time.sleep(15)  # Wait for 15 seconds before trying to reconnect
         finally:
             try:
