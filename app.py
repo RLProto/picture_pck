@@ -130,7 +130,11 @@ class SubHandler(object):
 
     def handle_value_change(self, new_value):
         print("Handling value change for:", new_value)
-    
+        if self.active_timer:
+            self.active_timer.cancel()
+            self.active_timer = None
+            logging.getLogger().important("Cancelled previous timer due to new valid step.")
+
         step_key = f"{float(new_value):.1f}"
         global step
         step = step_key
@@ -149,8 +153,11 @@ class SubHandler(object):
             if status_value != 128:
                 logging.getLogger().important(f"STATUS_TAG value is {status_value}, not taking pictures.")
                 return
+        except ua.UaStatusCodeError as e:
+            logging.error(f"UaStatusCodeError while reading STATUS_TAG value: {e}")
+            return
         except Exception as e:
-            logging.error(f"Failed to read STATUS_TAG value: {e}")
+            logging.error(f"Unexpected error while reading STATUS_TAG value: {e}")
             return
 
         if step_info:
@@ -167,6 +174,7 @@ class SubHandler(object):
         self.last_strategy = step_info['strategy'] if step_info else None
 
 def connect_to_opcua():
+    retry_delay = 15  # Initial retry delay in seconds
     while True:
         client = Client(OPC_SERVER_URL)
         try:
@@ -178,25 +186,31 @@ def connect_to_opcua():
             sub = client.create_subscription(500, handler)
             sub.subscribe_data_change(tag_node)
             logging.getLogger().important("Subscription created, waiting for events...")
-            
+
             # Infinite loop to keep script running
             while True:
                 try:
                     # Test the connection by reading a value
                     tag_node.get_value()
                     time.sleep(1)
-                except ua.UaStatusCodeError:
-                    logging.error("Lost connection to OPC UA server. Trying to reconnect...")
+                except ua.UaStatusCodeError as e:
+                    logging.error(f"UaStatusCodeError while reading tag value: {e}")
                     break
+                except Exception as e:
+                    logging.error(f"Unexpected error while reading tag value: {e}")
+                    break
+        except ua.UaStatusCodeError as e:
+            logging.error(f"UaStatusCodeError during OPC UA connection: {e}")
+        except TimeoutError as e:
+            logging.error(f"TimeoutError during OPC UA connection: {e}")
         except Exception as e:
-            logging.exception(f"An error occurred: {e}")
-            time.sleep(15)  # Wait for 15 seconds before trying to reconnect
+            logging.exception(f"An unexpected error occurred during OPC UA connection: {e}")
         finally:
-            try:
-                client.disconnect()
-                logging.getLogger().important("Client disconnected.")
-            except:
-                pass
+    
+            # Incremental backoff for retry delay
+            logging.getLogger().important(f"Reconnecting in {retry_delay} seconds...")
+            time.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, 300)  # Double the delay with a maximum of 5 minutes
 
 def main():
     global CAMERA_INDEX
