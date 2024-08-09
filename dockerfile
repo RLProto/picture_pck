@@ -4,7 +4,6 @@ FROM python:3.11.4-slim
 # Set the working directory in the container
 WORKDIR /app
 
-# Install necessary system and OpenCV dependencies
 # Note: Ensure all packages are available for ARM64 architecture in the base image's repository
 RUN apt-get update && apt-get install -y \
     libssl-dev \
@@ -22,7 +21,6 @@ RUN apt-get update && apt-get install -y \
 # Copy the requirements file
 COPY requirements.txt ./
 
-# Install any needed packages specified in requirements.txt
 # Ensure that all Python packages support ARM64 or have pure Python versions
 RUN pip install -r requirements.txt --verbose
 

@@ -17,6 +17,7 @@ services:
       EQUIPMENT: "dcx"
       VALID_STEPS: "1;0;1"
       NUMBER_OF_PICTURES: "3"
+      ENABLE_DUMP : True
 
     command: ["python", "app.py"]
 volumes:
